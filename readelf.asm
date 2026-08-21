@@ -8,6 +8,7 @@ macro write fd, buffer, size {
 	syscall
 
 }
+; yea i copy it from AI.
 ; ELF Magic & Identification Constants
 	ELF_MAGIC             =       0x464C457F       ; "\x7FELF" (little-endian)
 	ELFCLASS32            =       1                ; 32-bit objects
@@ -74,8 +75,6 @@ start:
 	cmp     rdi, 2
 	jl      argserror
 
-
-
 	mov     rdi, [rsp + 16]
 	mov     rax, 2
 	mov     rsi, 0
@@ -84,42 +83,47 @@ start:
 	cmp     rax, 0
 	jl      openerror
 	mov     r14, rax
-	lea     r12, [buffer]
-	; mov     rax, 8
-	; mov     rdi, r14
-	; mov     rsi, 0
-	; mov     rdx, 2
-	; syscall
-	; mov     r15, rax
-	; mov     rax, 8
-	; mov     rdi, r14
-	; mov     rsi, 0
-	; mov     rdx, 0
-	; syscall
-.readloop:
-	mov     rax, 0
+
+	; fstat
+	mov     rax, 5
 	mov     rdi, r14
-	mov     rsi, r12
-	mov     rdx, 65536
+	mov     rsi, stat_buf
 	syscall
-	cmp	rax, 0
-	jle	.readdone
-	add	r12, rax
-	jmp	.readloop
-.readdone:
+	cmp     rax, 0
+	jl      openerror
+
+	mov     rax, qword [stat_buf + 48]
+	mov     [file_size], rax
+
+	; mmap
+	mov     rax, 9
+	xor     rdi, rdi
+	mov     rsi, [file_size]
+	mov     rdx, 1                                 ; PROT_READ
+	mov     r10, 2                                 ; MAP_PRIVATE
+	mov     r8, r14
+	xor     r9, r9
+	syscall
+	cmp     rax, 0
+	jl      openerror
+	mov     [buffer], rax
+	mov     r15, rax
+
+	; close
 	mov     rax, 3
 	mov     rdi, r14
 	syscall
-	cmp     dword [buffer + Elf64_Ehdr.e_ident], ELF_MAGIC
+
+	cmp     dword [r15 + Elf64_Ehdr.e_ident], ELF_MAGIC
 	jne     fileisnotELF
 	write   1, ELFbuff, ELFbuff_len
 
-	cmp     byte [buffer + Elf64_Ehdr.e_ident + 4], ELFCLASS32
+	cmp     byte [r15 + Elf64_Ehdr.e_ident + 4], ELFCLASS32
 	je      .fileis32bit
 
 	write   1, fileis64bitmsg, fileis64bitmsglen
 	write   1, ELFCLASS64msg, ELFCLASS64msglen
-	movzx   rax, byte [buffer + Elf64_Ehdr.e_ident + 4]
+	movzx   rax, byte [r15 + Elf64_Ehdr.e_ident + 4]
 	mov     [elf64classaddr], al
 	call    print_hex
 	jmp     aftercheck
@@ -129,7 +133,7 @@ start:
 	jmp     aftercheck
 
 aftercheck:
-	mov     al, [buffer + Elf64_Ehdr.e_ident + 5]
+	mov     al, [r15 + Elf64_Ehdr.e_ident + 5]
 	cmp     al, ELFDATA2MSB
 	je      big_endian
 
@@ -141,58 +145,63 @@ big_endian:
 	jmp     skipshit
 
 skipshit:
-	movzx   rax, byte [buffer + Elf64_Ehdr.e_ident + 5]
+	movzx   rax, byte [r15 + Elf64_Ehdr.e_ident + 5]
 	mov     byte [littleEndianOrBig], al
 	call    print_hex
 
 e_shoffcalc:
 	write   1, e_shoffmsg, e_shoffmsglen
-	mov     rax, qword [buffer + Elf64_Ehdr.e_shoff]
+	mov     rax, qword [r15 + Elf64_Ehdr.e_shoff]
 	mov     [e_shoffaddr], rax
-	lea     r14, [buffer]
-	add     r14, rax                               ;14 = buffer + e_shoff
 	call    print_hex
+
 e_shnumcalc:
 	write   1, E_SHNUMMSG, E_SHNUMMSGlen
-	movzx   rax, word [buffer + Elf64_Ehdr.e_shnum]
+	movzx   rax, word [r15 + Elf64_Ehdr.e_shnum]
 	mov     [e_shnum], ax
 	call    print_hex
+
 e_shstrndxcalc:
 	write   1, E_SHSTRNDXMSG, E_SHSTRNDXMSGlen
-	movzx   rax, word [buffer + Elf64_Ehdr.e_shstrndx]
+	movzx   rax, word [r15 + Elf64_Ehdr.e_shstrndx]
 	mov     [e_shstrndx], ax
 	call    print_hex
+
 sh_offsetcalc:
 	write   1, SH_OFFSETMSG, SH_OFFSETMSGlen
 	movzx   rbx, word [e_shstrndx]
 	imul    rbx, sizeof.Elf64_Shdr
 	add     rbx, [e_shoffaddr]
-	lea	rbx, [buffer + rbx]
+	lea     rbx, [r15 + rbx]
 	mov     rax, qword [rbx + Elf64_Shdr.sh_offset]
 	mov     [sh_offset], rax
 	call    print_hex
+
 shstrtabcalc:
 	write   1, SHSTRTABMSG, SHSTRTABMSGlen
 	mov     rbx, [sh_offset]
-	lea     rax, [buffer + rbx]
+	lea     rax, [r15 + rbx]
 	mov     [shstrtab], rax
 	call    print_hex
+
 e_phoffcalc:
 	write   1, E_PHOFFMSG, E_PHOFFMSGlen
-	mov     rax, qword [buffer + Elf64_Ehdr.e_phoff]
+	mov     rax, qword [r15 + Elf64_Ehdr.e_phoff]
 	mov     [e_phoff], rax
 	call    print_hex
+
 e_phnumcalc:
 	write   1, E_PHNUMMSG, E_PHNUMMSGlen
-	movzx   rax, word [buffer + Elf64_Ehdr.e_phnum]
+	movzx   rax, word [r15 + Elf64_Ehdr.e_phnum]
 	mov     [e_phnum], ax
 	call    print_hex
-	cmp     rcx, 0
-	je      exit                                   ; no_sections
-	write   1, SEGMENTinfomsg, SEGMENTinfomsglen
-	mov     rax, [e_phoff]
-	lea     rbx, [buffer + rax]
 	movzx   rcx, word [e_phnum]
+	cmp     rcx, 0
+	je      print_sections                         ; no_sections
+	write   1, SEGMENTinfomsg, SEGMENTinfomsglen
+	movzx   rcx, word [e_phnum]
+	mov     rax, [e_phoff]
+	lea     rbx, [r15 + rax]
 
 .segmentloop:
 	push    rcx
@@ -215,14 +224,23 @@ print_sections:
 	jz      hexdumpPreparation
 
 	mov     rax, [e_shoffaddr]
-	lea     rbx, [buffer + rax]                    ; rbx = elf64 shdr
+	lea     rbx, [r15 + rax]
+	xor     r12, r12
+
+
 .section_loop:
 	push    rcx
 	push    rbx
+	push    r12
+
+	write   1, bracket_open, 1
+	mov     rax, r12
+	call    print_dec
+	write   1, bracket_close_space, 2
 
 	mov     rax, qword [rbx + Elf64_Shdr.sh_addr]
 	call    print_hex_no_nl
-	write   1, bracket_open, 2
+	write   1, bracket_open_space, 2
 	mov     eax, dword [rbx + Elf64_Shdr.sh_name]
 	mov     rsi, [shstrtab]
 	add     rsi, rax
@@ -230,12 +248,15 @@ print_sections:
 	call    print_string_null
 	write   1, bracket_close, 2
 
+	pop     r12
 	pop     rbx
 	pop     rcx
 
+	inc     r12
 	add     rbx, sizeof.Elf64_Shdr
 	dec     rcx
 	jnz     .section_loop
+
 
 
 hexdumpPreparation:
@@ -243,36 +264,234 @@ hexdumpPreparation:
 	mov     rax, 0
 	xor     edi, edi
 	mov     rsi, readbuff
-	mov     rdx, 2
+	mov     rdx, 16
 	syscall
-	movzx   r15, byte [readbuff]
-	or      r15, 0x20
-
-	cmp     r15, 'y'
-	je      preparation
-	jmp     exit
-
-
-preparation:
-	mov     rsi, buffer
-	mov     rcx, 16
-
-dump_loop:
-	push    rsi rcx
-	mov     rax, [rsi]
 	cmp     rax, 0
-	je      .skip
-	call    print_hex
-	pop     rcx rsi
-	add     rsi, 8
-	loop    dump_loop
+	jle     exit
 
-	jmp     exit
-.skip:
-	pop     rcx rsi
-	add     rsi, 8
-	loop    dump_loop
-	jmp     exit
+	movzx   rax, byte [readbuff]
+	cmp     al, 'n'
+	je      exit
+	cmp     al, 'N'
+	je      exit
+	cmp     al, 'q'
+	je      exit
+	cmp     al, 10
+	je      exit
+
+	cmp     al, 'a'
+	je      .dump_all
+	cmp     al, 'A'
+	je      .dump_all
+
+	xor     rax, rax
+	xor     rcx, rcx
+
+
+
+.parse_num:
+	movzx   rdx, byte [readbuff + rcx]
+	cmp     dl, 10
+	je      .num_parsed
+	cmp     dl, 0
+	je      .num_parsed
+	cmp     dl, ' '
+	je      .num_parsed
+	cmp     dl, '0'
+	jl      exit
+	cmp     dl, '9'
+	jg      exit
+	sub     dl, '0'
+	imul    rax, 10
+	add     rax, rdx
+	inc     rcx
+	jmp     .parse_num
+
+
+
+.num_parsed:
+	movzx   rcx, word [e_shnum]
+	cmp     rax, rcx
+	jae     exit
+
+	imul    rax, sizeof.Elf64_Shdr
+	add     rax, [e_shoffaddr]
+	lea     rbx, [r15 + rax]
+
+	mov     rax, [rbx + Elf64_Shdr.sh_offset]
+	mov     [dump_start], rax
+	mov     rax, [rbx + Elf64_Shdr.sh_size]
+	mov     [dump_len], rax
+	jmp     ppreparation
+
+
+.dump_all:
+	mov     qword [dump_start], 0
+	mov     rax, [file_size]
+	mov     [dump_len], rax
+
+
+
+ppreparation:
+	mov     r12, [dump_len]
+	test    r12, r12
+	jz      exit
+	xor     rbx, rbx
+	mov     byte [is_dup], 0
+	mov     byte [has_prev], 0
+
+
+
+
+.dump_line:
+	cmp     rbx, r12
+	jge     exit
+
+	lea     rax, [rbx + 16]
+	cmp     rax, r12
+	ja      .print_current_line
+
+	cmp     byte [has_prev], 0
+	je      .print_current_line
+
+	mov     rax, [dump_start]
+	add     rax, rbx
+	lea     rsi, [r15 + rax]
+	lea     rdi, [prev_line]
+	mov     rax, [rsi]
+	cmp     rax, [rdi]
+	jne     .not_dup
+	mov     rax, [rsi + 8]
+	cmp     rax, [rdi + 8]
+	jne     .not_dup
+
+	cmp     byte [is_dup], 1
+	je      .skip_line
+
+	write   1, star_line, 2
+	mov     byte [is_dup], 1
+	jmp     .skip_line
+
+
+
+.not_dup:
+	mov     byte [is_dup], 0
+
+.print_current_line:
+	mov     rax, [dump_start]
+	add     rax, rbx
+	lea     rsi, [r15 + rax]
+	lea     rdi, [prev_line]
+	xor     rcx, rcx
+
+
+
+.copy_prev:
+	lea     rax, [rbx + rcx]
+	cmp     rax, r12
+	jae     .pad_prev
+	mov     al, [rsi + rcx]
+	mov     [rdi + rcx], al
+	jmp     .next_copy
+
+
+
+.pad_prev:
+	mov     byte [rdi + rcx], 0
+
+
+
+
+
+.next_copy:
+	inc     rcx
+	cmp     rcx, 16
+	jl      .copy_prev
+
+	mov     byte [has_prev], 1
+
+	mov     rax, [dump_start]
+	add     rax, rbx
+	call    print_hex_no_nl
+	write   1, colon_space, 2                      ; :
+
+	xor     r13, r13
+
+
+
+.hex_bytes:
+	lea     rax, [rbx + r13]
+	cmp     rax, r12
+	jge     .pad_hex
+
+	mov     rax, [dump_start]
+	add     rax, rbx
+	add     rax, r13
+	movzx   rax, byte [r15 + rax]
+	call    print_byte_hex
+	jmp     .next_hex
+
+
+
+.pad_hex:
+	write   1, pad_spaces, 3                       ; align
+
+
+
+.next_hex:
+	inc     r13
+	cmp     r13, 16
+	jl      .hex_bytes
+
+	write   1, bar_open, 3                         ; |
+	xor     r13, r13
+
+
+.ascii_bytes:
+	lea     rax, [rbx + r13]
+	cmp     rax, r12
+	jge     .line_done
+
+	mov     rax, [dump_start]
+	add     rax, rbx
+	add     rax, r13
+	movzx   rax, byte [r15 + rax]
+	cmp     al, 32
+	jl      .dot
+	cmp     al, 126
+	jg      .dot
+	mov     [ascii_char], al
+	jmp     .print_char
+.dot:
+	mov     byte [ascii_char], '.'
+
+
+
+
+.print_char:
+	write   1, ascii_char, 1
+
+	inc     r13
+	cmp     r13, 16
+	jl      .ascii_bytes
+
+
+
+.line_done:
+	write   1, bar_close_nl, 2                     ; \n
+
+
+
+
+.skip_line:
+	add     rbx, 16
+	jmp     .dump_line
+
+
+
+
+
+
 
 openerror:
 	mov     rax, 1
@@ -290,6 +509,40 @@ fileisnotELF:
 	mov     rdx, notELF_LEN
 	syscall
 	jmp     exit
+
+print_dec:
+	push    rax
+	push    rbx
+	push    rcx
+	push    rdx
+	push    rsi
+	push    rdi
+	push    r11
+
+	mov     rdi, dec_buf + 15
+	mov     byte [rdi], 0
+	mov     rbx, 10
+.dec_loop:
+	xor     rdx, rdx
+	div     rbx
+	add     dl, '0'
+	dec     rdi
+	mov     [rdi], dl
+	test    rax, rax
+	jnz     .dec_loop
+
+	mov     rsi, rdi
+	call    print_string_null
+
+	pop     r11
+	pop     rdi
+	pop     rsi
+	pop     rdx
+	pop     rcx
+	pop     rbx
+	pop     rax
+	ret
+
 print_hex:
 	push    rax
 	push    rbx
@@ -297,6 +550,7 @@ print_hex:
 	push    rdx
 	push    rsi
 	push    rdi
+	push    r11
 
 	mov     rbx, rax
 	mov     rcx, 16                                ; 16 hex
@@ -316,6 +570,7 @@ print_hex:
 	; syswrite
 	write   1, out_buf, 17
 
+	pop     r11
 	pop     rdi
 	pop     rsi
 	pop     rdx
@@ -323,8 +578,16 @@ print_hex:
 	pop     rbx
 	pop     rax
 	ret
+
 print_hex_no_nl:
-	push    rax rbx rcx rdx rsi rdi
+	push    rax
+	push    rbx
+	push    rcx
+	push    rdx
+	push    rsi
+	push    rdi
+	push    r11
+
 	mov     rbx, rax
 	mov     rcx, 16
 	mov     rdi, out_buf
@@ -337,12 +600,28 @@ print_hex_no_nl:
 	inc     rdi
 	loop    .l
 	write   1, out_buf, 16
-	pop     rdi rsi rdx rcx rbx rax
+
+	pop     r11
+	pop     rdi
+	pop     rsi
+	pop     rdx
+	pop     rcx
+	pop     rbx
+	pop     rax
 	ret
 
 print_string_null:
-	push    rsi rdi rdx rax
+	push    rax
+	push    rbx
+	push    rcx
+	push    rdx
+	push    rsi
+	push    rdi
+	push    r11
+
 	mov     rdi, rsi
+
+
 .find_len:
 	cmp     byte [rsi], 0
 	je      .done
@@ -352,16 +631,59 @@ print_string_null:
 	mov     rdx, rsi
 	sub     rdx, rdi
 	jz      .empty
-	mov	rax, 1
-	mov	rsi, rdi
-	mov	rdi, 1
+	mov     rax, 1
+	mov     rsi, rdi
+	mov     rdi, 1
 	syscall
-.empty:
-	pop     rax rdx rdi rsi
+
+
+.empty: ; godbless func
+	pop     r11
+	pop     rdi
+	pop     rsi
+	pop     rdx
+	pop     rcx
+	pop     rbx
+	pop     rax
 	ret
 
 argserror:
 	write   1, argserrormsg, argserrormsglen
+
+print_byte_hex:
+	push    rax
+	push    rbx
+	push    rcx
+	push    rdx
+	push    rsi
+	push    rdi
+	push    r11
+
+	mov     bl, al
+	shr     al, 4
+	and     al, 0x0F
+	movzx   rax, al
+
+	mov     dl, [hex_chars + rax]
+	mov     [byte_buf], dl
+
+	mov     al, bl
+	and     al, 0x0F
+	movzx   rax, al
+	mov     dl, [hex_chars + rax]
+	mov     [byte_buf + 1], dl
+	mov     byte [byte_buf + 2], ' '
+
+	write   1, byte_buf, 3
+
+	pop     r11
+	pop     rdi
+	pop     rsi
+	pop     rdx
+	pop     rcx
+	pop     rbx
+	pop     rax
+	ret
 
 exit:
 	mov     rax, 60
@@ -369,17 +691,32 @@ exit:
 	syscall
 
 segment readable writeable
-	bracket_open db ' ['
-	bracket_close db ']', 10
+	colon_space           db      ': ', 0
+	pad_spaces            db      '   ', 0
+	bar_open              db      ' | ', 0
+	bar_close_nl          db      '|', 10
+	star_line             db      '*', 10
+	byte_buf              rb      3
+	ascii_char            rb      1
+	bracket_open          db      '['
+	bracket_open_space    db      ' ['
+	bracket_close         db      ']', 10
+	bracket_close_space   db      '] '
 	hex_chars             db      '0123456789ABCDEF'
 	out_buf               rb      17               ; 16+1 (\n)
+	dec_buf               rb      16
+	prev_line             rb      16
+	is_dup                rb      1
+	has_prev              rb      1
+	stat_buf              rb      144
+
 	ELFbuff               db      'THIS IS ELF!', 0, 10
 	ELFbuff_len           =       $ - ELFbuff
 	notELF                db      'this isnt ELF. :(', 0, 10
 	notELF_LEN            =       $ - notELF
-	openerrormsg          db      'ERROR WHILE TRYING TO OPEN FILE'
+	openerrormsg          db      'ERROR WHILE TRYING TO OPEN FILE', 10
 	openerrormsg_len      =       $ - openerrormsg
-	doyouwanna            db      'Do you wanna print hexdump?(y/N)', 0, 10
+	doyouwanna            db      'Select section to dump (0-99, a=all, n=skip): ', 0
 	doyouwanna_len        =       $ - doyouwanna
 	e_shoffmsg            db      'E_SHOFF = ', 0
 	e_shoffmsglen         =       $ - e_shoffmsg
@@ -423,14 +760,17 @@ segment readable writeable
 	argserrormsg          db      'ERROR WHILE TRING TO OPEN FILE (ARGS ERROR)', 0, 10
 	argserrormsglen       =       $ - argserrormsg
 
+	buffer                rq      1
+	file_size             rq      1
+	dump_start            rq      1
+	dump_len              rq      1
 	sh_offset             rq      1
 	e_phoff               rq      1
-	e_phnum               rw      1
 	shstrtab              rq      1
-	readbuff              rb      2                ; y/N + \n = byte
 	e_shoffaddr           rq      1
-	elf64classaddr        rb      1
-	littleEndianOrBig     rb      1
+	e_phnum               rw      1
 	e_shnum               rw      1
 	e_shstrndx            rw      1
-	buffer                rb      524288
+	elf64classaddr        rb      1
+	littleEndianOrBig     rb      1
+	readbuff              rb      16
